@@ -1,0 +1,11 @@
+{
+  "name": "学期助手",
+  "short_name": "学期助手",
+  "description": "个人学习与学期管理",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#5671e8",
+  "lang": "zh-CN"
+}
