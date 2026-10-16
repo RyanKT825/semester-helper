@@ -23,11 +23,13 @@
     if (JSON.stringify(db) === snapshot) return toast('没有可处理的未完成事项');
     const prior = snapshot;
     undoData = prior;
-    save(); render(); toast(message + ' · 点此撤销');
+    save();
+    const after = JSON.stringify(db);
+    render(); toast(message + ' · 点此撤销');
     const node = document.getElementById('toast');
     node.style.cursor = 'pointer';
     node.onclick = () => {
-      if (undoData !== prior) return;
+      if (undoData !== prior || JSON.stringify(db) !== after) return toast('之后已有新修改，无法撤销');
       db = JSON.parse(prior); undoData = null;
       save(); render(); toast('已撤销');
     };
@@ -208,7 +210,7 @@
       <img id="photo-preview" alt="课表截图预览" style="display:none;width:100%;max-height:260px;object-fit:contain;margin:10px 0;border-radius:10px">
       <div class="row"><button class="btn primary" id="photo-recognize" onclick="recognizePhoto()">识别图片</button><button class="btn" onclick="addPhotoRow()">手动加一条</button></div>
       <div id="photo-status" class="sub" style="margin:10px 0"></div><div id="photo-rows" class="list"></div>
-      <div id="photo-actions" class="row" style="display:none;margin-top:14px"><button class="btn primary" onclick="applyPhotoImport('merge')">合并到该周</button><button class="btn" onclick="applyPhotoImport('replace')">替换该周未完成安排</button></div>`;
+      <div id="photo-actions" class="row" style="display:none;margin-top:14px"><button class="btn primary" onclick="applyPhotoImport('merge')">合并到该周</button><button class="btn" onclick="applyPhotoImport('replace')">替换该周未完成课程</button></div>`;
     document.getElementById('modal').classList.add('show');
   };
   previewPhoto = function (input) {
