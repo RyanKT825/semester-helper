@@ -55,6 +55,12 @@
       });
     }
     if (!d.lab || ['total','booked','completed','reports'].some(k => !number(d.lab[k]))) throw Error('实验数据无效');
+    if (d.autoRollover != null) {
+      const a = d.autoRollover;
+      if (!a || typeof a !== 'object' || Array.isArray(a) || !['off','tomorrow','library'].includes(a.mode) ||
+          (a.enabledAt && !date(a.enabledAt)) || (a.lastRun && !date(a.lastRun)) ||
+          (a.lastCount != null && !number(a.lastCount))) throw Error('跨日自动整理设置无效');
+    }
     return d;
   }
 

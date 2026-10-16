@@ -45,9 +45,10 @@
     document.getElementById('dayPicker').value = dayKey;
     document.getElementById('dayLabel').textContent = new Date(dayKey + 'T12:00:00').toLocaleDateString('zh-CN', {year:'numeric',month:'long',day:'numeric',weekday:'long'});
     const xs = dayItems(dayKey);
-    const done = xs.filter(x => x.done).length;
-    const rate = xs.length ? Math.round(done / xs.length * 100) : 0;
-    document.getElementById('completion').textContent = rate + '%';
+    const actionable = xs.filter(x => !x.fixed);
+    const done = actionable.filter(x => x.done).length;
+    const rate = actionable.length ? Math.round(done / actionable.length * 100) : 0;
+    document.getElementById('completion').textContent = `${done}/${actionable.length} · ${rate}%`;
     document.getElementById('completionBar').style.width = rate + '%';
     document.getElementById('todayList').innerHTML = xs.length ? xs.map(x => {
       const ops = x.fixed ? '<span class="meta">固定课</span>' :
@@ -56,17 +57,18 @@
         `<button class="smallbtn" onclick="deleteFromDay('${x.kind}','${x.id}')">${x.kind === 'task' ? '移出' : '删除'}</button>`;
       return itemHtml({...x,title:x.title || x.name}, ops);
     }).join('') : '<div class="empty">这一天还没有安排。</div>';
+    drawAutoRollover();
   };
-  function moveCore(kind, idv, action) {
+  function moveCore(kind, idv, action, sourceDate = dayKey, targetDate = dateAdd(sourceDate, 1)) {
     if (kind === 'course') return false;
     if (kind === 'task') {
       const t = db.tasks.find(x => x.id === idv);
-      if (!t || t.done || t.scheduledDate !== dayKey) return false;
-      t.scheduledDate = action === 'tomorrow' ? dateAdd(dayKey, 1) : null;
+      if (!t || t.done || t.scheduledDate !== sourceDate) return false;
+      t.scheduledDate = action === 'tomorrow' ? targetDate : null;
       if (action === 'library') t.time = '';
       return true;
     }
-    const arr = kind === 'event' ? db.weekly : (db.daily[dayKey] || []);
+    const arr = kind === 'event' ? db.weekly : (db.daily[sourceDate] || []);
     const at = arr.findIndex(x => x.id === idv);
     if (at < 0 || arr[at].done || fixedPlan(arr[at])) return false;
     const item = arr.splice(at, 1)[0];
@@ -75,7 +77,7 @@
       db.tasks.push({id:taskId,title:item.title,category:item.category || '',duration:Number(item.duration) || 0,
         priority:item.priority || '',deadline:item.deadline || '',time:'',scheduledDate:null,done:false});
     } else {
-      item.date = dateAdd(dayKey, 1);
+      item.date = targetDate;
       if (kind === 'event') {
         item.weekStart = monday(item.date);
         db.weekly.push(item);
@@ -99,6 +101,68 @@
     xs.forEach(x => { if (moveCore(x.kind, x.id, action)) count++; });
     finishChange(snapshot, `已处理 ${count} 条`);
   };
+  function rolloverConfig() {
+    return db.autoRollover || {mode:'off',enabledAt:'',lastRun:'',lastCount:0};
+  }
+  function pastUnfinished(from, today) {
+    const rows = [];
+    db.tasks.forEach(x => {
+      if (!x.done && x.scheduledDate && x.scheduledDate >= from && x.scheduledDate < today)
+        rows.push({kind:'task',id:x.id,date:x.scheduledDate,title:x.title});
+    });
+    db.weekly.forEach(x => {
+      if (!x.done && !fixedPlan(x) && x.date && x.date >= from && x.date < today)
+        rows.push({kind:'event',id:x.id,date:x.date,title:x.title});
+    });
+    Object.entries(db.daily).forEach(([date, items]) => {
+      if (date < from || date >= today) return;
+      items.forEach(x => { if (!x.done && !fixedPlan(x)) rows.push({kind:'daily',id:x.id,date,title:x.title}); });
+    });
+    return rows;
+  }
+  function drawAutoRollover() {
+    const cfg = rolloverConfig();
+    document.querySelectorAll('input[name="rollover-mode"]').forEach(input => { input.checked = input.value === cfg.mode; });
+    const status = document.getElementById('rolloverStatus');
+    const backlog = document.getElementById('rolloverBacklog');
+    if (!status || !backlog) return;
+    status.textContent = cfg.mode === 'off' ? '当前为手动处理。' :
+      cfg.lastRun && cfg.lastCount ? `上次自动整理：${cfg.lastRun} · ${cfg.lastCount} 条` :
+      `从 ${cfg.enabledAt || iso(new Date())} 起，跨日后自动处理。`;
+    const old = pastUnfinished('0000-01-01', iso(new Date())).length;
+    backlog.innerHTML = cfg.mode !== 'off' && old ?
+      `<button class="smallbtn" onclick="runRolloverBacklog()">现在整理过去遗漏的 ${old} 条</button>` : '';
+  }
+  setAutoRollover = function (mode) {
+    if (!['off','tomorrow','library'].includes(mode)) return;
+    const old = rolloverConfig();
+    if (old.mode === mode) return;
+    db.autoRollover = {mode,enabledAt:mode === 'off' ? '' : iso(new Date()),lastRun:old.lastRun || '',lastCount:old.lastCount || 0};
+    save(); render();
+    toast(mode === 'off' ? '已关闭自动整理' : mode === 'tomorrow' ? '已开启：跨日顺延' : '已开启：跨日退回任务库');
+  };
+  function runRollover(force = false) {
+    if (!db || !force && document.getElementById('modal')?.classList.contains('show')) return 0;
+    const cfg = rolloverConfig();
+    if (cfg.mode === 'off') return 0;
+    const today = iso(new Date());
+    const from = force ? '0000-01-01' : cfg.enabledAt || today;
+    const rows = pastUnfinished(from, today);
+    if (!rows.length) return 0;
+    const snapshot = beforeChange();
+    let count = 0;
+    rows.forEach(x => {
+      if (!moveCore(x.kind, x.id, cfg.mode, x.date, today)) return;
+      (db.history[x.date] = db.history[x.date] || []).push({id:id(),title:x.title || '未命名事项',kind:'rollover',done:false,
+        note:cfg.mode === 'tomorrow' ? `自动顺延至 ${today}` : `自动退回任务库（${today}）`});
+      count++;
+    });
+    if (!count) return 0;
+    db.autoRollover = {...cfg,lastRun:today,lastCount:count};
+    finishChange(snapshot, `已自动整理 ${count} 条`);
+    return count;
+  }
+  runRolloverBacklog = function () { runRollover(true); };
   resetToday = function () {
     const xs = dayItems(dayKey).filter(x => !x.done && !x.fixed);
     if (!xs.length) return toast('这一天没有可重置事项');
@@ -308,4 +372,28 @@
       finishChange(snapshot, `${mode === 'replace' ? '已更新' : '已合并'}该周课程 ${count} 条`);
     } catch (error) { toast('请检查识别结果：' + error.message); }
   };
+  if (window.CloudSync) {
+    const originalInit = CloudSync.init;
+    CloudSync.init = function (adapter) {
+      const originalSetData = adapter.setData;
+      return originalInit({...adapter,setData:data => {
+        originalSetData(data);
+        setTimeout(() => runRollover(), 0);
+      }});
+    };
+  }
+  function scheduleMidnight() {
+    const next = new Date();
+    next.setHours(24,0,2,0);
+    setTimeout(() => { runRollover(); scheduleMidnight(); }, Math.max(1000,next - new Date()));
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => { runRollover(); scheduleMidnight(); }, 2000);
+    setInterval(() => runRollover(), 60000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') runRollover();
+    });
+    document.addEventListener('focusout', () => setTimeout(() => runRollover(), 0));
+    window.addEventListener('pageshow', () => runRollover());
+  });
 })();

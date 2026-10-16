@@ -1,4 +1,4 @@
-const CACHE = 'semester-helper-static-v3-planning';
+const CACHE = 'semester-helper-static-v4-rollover';
 const FILES = ['./', './index.html', './cloud.js', './enhancements.js', './manifest.json'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));
